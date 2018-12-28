@@ -1,4 +1,6 @@
-﻿using Microsoft.Xna.Framework;
+﻿#define DEBUG
+
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using System;
 using System.Threading;
@@ -26,10 +28,22 @@ public enum SwitchButton
     RS
 }
 
+public enum SwitchHats
+{
+    Up = 0,
+    UpRight,
+    Right,
+    DownRight,
+    Down,
+    DownLeft,
+    Left,
+    UpLeft
+}
+
 /*
  * Controller enable for generic controllers is currently off!!! 
  * Turn it on manually to test!
- */ 
+ */
 
 public class InputHelper
 {
@@ -44,7 +58,7 @@ public class InputHelper
     protected Guid joystickGuid;
     protected float JoystickPingDuration = 5.0f, JoystickPing = 5.0f;
     protected float rumbleDuration, leftMotor, rightMotor;
-    protected bool enableControllers;
+    protected bool enableControllers = true;
     
     public InputHelper()
     {
@@ -55,8 +69,7 @@ public class InputHelper
         foreach (PlayerIndex index in Enum.GetValues(typeof(PlayerIndex)))
             currentGamePadState[(int)index] = GamePad.GetState(index);
 
-        //currentJoyState = Joystick.GetState(0);
-        enableControllers = false;
+        //currentJoyState = Joystick.GetState(0);        
         directInput = new DirectInput();
     }
 
@@ -73,16 +86,13 @@ public class InputHelper
         foreach(PlayerIndex index in Enum.GetValues(typeof(PlayerIndex)))
             currentGamePadState[(int)index] = GamePad.GetState(index);
 
-        //currentJoyState = Joystick.GetState(0);
-        //joystickCapabilities = Joystick.GetCapabilities(0);
-
         if(RumbleDuration > 0)
         {
-            GamePadVibration(PlayerIndex.One, .5f, .5f);
+            GamePadVibration(PlayerIndex.One, leftMotor, rightMotor);
             rumbleDuration -= (float)gameTime.ElapsedGameTime.TotalSeconds;
         }
 
-        if (!currentGamePadState[0].IsConnected && enableControllers)
+        if (!currentGamePadState[0].IsConnected && enableControllers && joystick == null)
         {
             JoystickPing -= (float)gameTime.ElapsedGameTime.TotalSeconds;
             if (JoystickPing < 0)
@@ -90,60 +100,111 @@ public class InputHelper
                 JoystickPing = JoystickPingDuration;
                 var th = new Thread(GenericControllerConnection);
                 th.Start();
-                
-                //Console.WriteLine("A new thread has been created!");
+#if DEBUG
+                Console.WriteLine("A new thread has been created!");
+#endif                
+            }
+        }
+        else if (joystick != null && enableControllers)
+        {
+            joystick.Poll();
+#if DEBUG
+            Console.WriteLine("Polling Joystick...");
+#endif
+            try
+            {
+                JoystickState state = joystick.GetCurrentState();
+                currentJoyState = joystick.GetCurrentState();
+                bool[] button = state.Buttons;
+                int[] hats = state.PointOfViewControllers;
+                Console.WriteLine("[{0}]", string.Join(", ", hats));
+            }
+            catch (Exception)
+            {
+#if DEBUG
+                Console.WriteLine("Oops, the controller disconnected!");
+#endif
+                joystick = null;
             }
         }
     }
 
     protected void GenericControllerConnection()
     {
-        //Console.WriteLine("Launched new thread!");
-        if (joystick == null)
+#if DEBUG
+        Console.WriteLine("Launched new thread!");
+        Console.WriteLine("Looking for Joystick!");
+#endif
+        var joystickGuid = Guid.Empty;
+
+        foreach (var deviceInstance in directInput.GetDevices(DeviceType.Gamepad, DeviceEnumerationFlags.AllDevices))
+            joystickGuid = deviceInstance.InstanceGuid;
+
+        //If Gamepad not found, look for a Joystick
+        if (joystickGuid == Guid.Empty)
+                foreach (var deviceInstance in directInput.GetDevices(DeviceType.Joystick, DeviceEnumerationFlags.AllDevices))
+                    joystickGuid = deviceInstance.InstanceGuid;
+
+        if (joystickGuid == Guid.Empty)
         {
-            //Console.WriteLine("Looking for Joystick!");
-
-            var joystickGuid = Guid.Empty;
-
-            foreach (var deviceInstance in directInput.GetDevices(DeviceType.Gamepad, DeviceEnumerationFlags.AllDevices))
-                joystickGuid = deviceInstance.InstanceGuid;
-
-            //If Gamepad not found, look for a Joystick
-            if (joystickGuid == Guid.Empty)
-                    foreach (var deviceInstance in directInput.GetDevices(DeviceType.Joystick, DeviceEnumerationFlags.AllDevices))
-                        joystickGuid = deviceInstance.InstanceGuid;
-
-            if (joystickGuid == Guid.Empty)
-            {
-                return;
-            }
-
-            //Console.WriteLine("Found Joystick/Gamepad with GUID: {0}", joystickGuid);
-
-
-            joystick = new Joystick(directInput, joystickGuid);
-            var allEffects = joystick.GetEffects();
-            //foreach (var effectInfo in allEffects)
-            //    Console.WriteLine("Effect available {0}", effectInfo.Name);
-            joystick.Properties.BufferSize = 128;
-            joystick.Acquire();
+            return;
         }
-        else { 
-            joystick.Poll();
-            //Console.WriteLine("Polling instead...");
+#if DEBUG
+        Console.WriteLine("Found Joystick/Gamepad with GUID: {0}", joystickGuid);
+#endif
 
-            try
-            {
-                JoystickState state = joystick.GetCurrentState();
-                bool[] button = state.Buttons;
-                int[] buttons = state.PointOfViewControllers;
-            }
-            catch (Exception)
-            {
-                //Console.WriteLine("Oops, the controller disconnected!");
-                joystick = null;
-            }
+        joystick = new Joystick(directInput, joystickGuid);
+        var allEffects = joystick.GetEffects();
+#if DEBUG
+        foreach (var effectInfo in allEffects)
+            Console.WriteLine("Effect available {0}", effectInfo.Name);
+#endif
+        joystick.Properties.BufferSize = 128;
+        joystick.Acquire();
+       
+    }
+
+    public bool GenButtonPressed(Buttons button)
+    {
+        return currentJoyState.Buttons[(int)button] &&
+            !previousJoyState.Buttons[(int)button];        
+    }
+
+    public bool GenButtonReleased(Buttons button)
+    {
+        return !currentJoyState.Buttons[(int)button] &&
+            previousJoyState.Buttons[(int)button];        
+    }
+
+    public bool IsGenButtonPressed(Buttons button)
+    {
+        return currentJoyState.Buttons[(int)button];        
+    }
+
+    
+
+    public bool GenHatPressed(SwitchHats hats)
+    {
+        switch((int)hats)
+        {
+            case 0: // UP
+                return currentJoyState.PointOfViewControllers[0] == 0;
+            case 1: // UPRIGHT
+                return currentJoyState.PointOfViewControllers[0] == 4500;
+            case 2: // RIGHT
+                return currentJoyState.PointOfViewControllers[0] == 9000;
+            case 3: // DOWNRIGHT
+                return currentJoyState.PointOfViewControllers[0] == 13500;
+            case 4: // DOWN
+                return currentJoyState.PointOfViewControllers[0] == 18000;
+            case 5: // DOWNLEFT
+                return currentJoyState.PointOfViewControllers[0] == 22500;
+            case 6: // LEFT
+                return currentJoyState.PointOfViewControllers[0] == 27000;
+            case 7: // UPLEFT
+                return currentJoyState.PointOfViewControllers[0] == 31500;
         }
+        return false;
     }
 
     public float RumbleDuration
